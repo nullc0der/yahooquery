@@ -6,7 +6,7 @@ from datetime import datetime
 from requests_futures.sessions import FuturesSession
 
 from tqdm import tqdm
-from yahooquery.login import YahooSelenium
+from yahooquery.selenium import YahooSelenium
 from yahooquery.utils import _convert_to_list, _init_session
 from yahooquery.utils.countries import COUNTRIES
 
@@ -815,7 +815,7 @@ class _YahooFinance(object):
             },
         },
         "quotes": {
-            "path": "https://query2.finance.yahoo.com/v6/finance/quote",
+            "path": "https://query2.finance.yahoo.com/v7/finance/quote",
             "response_field": "quoteResponse",
             "query": {"symbols": {"required": True, "default": None}},
         },
@@ -927,12 +927,13 @@ class _YahooFinance(object):
         self.country = kwargs.get("country", "united states").lower()
         self.formatted = kwargs.pop("formatted", False)
         self.session = _init_session(kwargs.pop("session", None), **kwargs)
-        self.crumb = kwargs.pop("crumb", None)
         self.progress = kwargs.pop("progress", False)
         username = os.getenv("YF_USERNAME") or kwargs.get("username")
         password = os.getenv("YF_PASSWORD") or kwargs.get("password")
-        if username and password:
-            self.login(username, password)
+        yf_selenium = YahooSelenium(username=username, password=password)
+        for cookie in yf_selenium.cookies:
+            self.session.cookies.set(cookie["name"], cookie["value"])
+        self.crumb = yf_selenium.crumb
 
     @property
     def symbols(self):
@@ -958,7 +959,7 @@ class _YahooFinance(object):
                 )
             )
         self._country = country.lower()
-        self._default_query_params = COUNTRIES[self._country]
+        self._country_params = COUNTRIES[self._country]
 
     @property
     def default_query_params(self):
@@ -975,20 +976,12 @@ class _YahooFinance(object):
         To change the default query parameters, set the country property equal
         to a valid country.
         """
-        return self._default_query_params
-
-    def login(self, username, password):
-        ys = YahooSelenium(username=username, password=password)
-        d = ys.yahoo_login()
-        try:
-            [self.session.cookies.set(c["name"], c["value"]) for c in d["cookies"]]
-            self.crumb = d["crumb"]
-            self.userId = d["userId"]
-        except TypeError:
-            print(
-                "Invalid credentials provided.  Please check username and"
-                " password and try again"
-            )
+        params = self._country_params
+        if self.crumb is not None:
+            params['crumb'] = self.crumb
+        else:
+            print('Warning:  Crumb is not set')
+        return params
 
     def _chunk_symbols(self, key, params={}, chunk=None, **kwargs):
         current_symbols = self.symbols
@@ -1024,20 +1017,6 @@ class _YahooFinance(object):
                 invalid_symbols.append(k)
         self.symbols = valid_symbols
         self.invalid_symbols = invalid_symbols or None
-
-    # def _get_crumb(self):
-    #     """Retrieve crumb from yahoo finance
-
-    #     Yahoo Finance requires a crumb to be passed as a query parameter
-    #     to certain endpoints.  This will be called in the event the crumb
-    #     is None
-    #     """
-    #     r = requests.get("https://finance.yahoo.com/screener/new")
-    #     crumbs = re.findall('"crumb":"(.+?)"', r.text)
-    #     crumb = crumbs[-1].replace("\\u002F", "/")
-    #     if not crumb:
-    #         return "Unable to retrieve crumb.  Try again"
-    #     return crumb
 
     def _format_data(self, obj, dates):
         for k, v in obj.items():
@@ -1119,7 +1098,7 @@ class _YahooFinance(object):
                     )
                 }
             )
-        params.update(self._default_query_params)
+        params.update(self.default_query_params)
         params = {
             k: str(v).lower() if v is True or v is False else v
             for k, v in params.items()
