@@ -173,7 +173,7 @@ def setup_session_with_cookies_and_crumb(session: Session):
     headers = {**random.choice(HEADERS)}
     session.headers = headers
     try:
-        response = session.get('https://finance.yahoo.com')
+        response = session.get("https://finance.yahoo.com/quote/TSLA/")
     except Exception:
         return session, None
     else:
